@@ -22,7 +22,7 @@ import joblib
 # Config / file paths
 # -----------------------
 DATA_FILENAME = "hr_support_emails_2025_6.json"
-MODEL_BUNDLE = "email_classifier_bundle.joblib"   # single file with {'vectorizer':..., 'model':...}
+MODEL_BUNDLE = "best_email_classifier.joblib"   # single file with {'vectorizer':..., 'model':...}
 MODELS_DIR = Path("models")
 MODELS_DIR.mkdir(exist_ok=True)
 MODEL_PATH = MODELS_DIR / MODEL_BUNDLE
