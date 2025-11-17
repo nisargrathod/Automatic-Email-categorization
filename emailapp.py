@@ -8,51 +8,51 @@ import seaborn as sns
 from wordcloud import WordCloud
 from collections import Counter
 
-from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score
 
 st.set_page_config(page_title="HR Email Categorization", layout="wide")
 
-# -------------------------------------
-# ✅ BUILT-IN DATASET (No file needed)
-# -------------------------------------
+# ---------------------------------------------------------
+# ✅ NEW: Larger Built-in Dataset (15 Samples, 3 per class)
+# ---------------------------------------------------------
+
 SAMPLE_DATA = [
-    {
-        "subject": "Salary increment not received",
-        "body": "Hello HR, I haven't received my salary increment for June.",
-        "category": "Payroll"
-    },
-    {
-        "subject": "Laptop not working",
-        "body": "My office laptop is not turning on, please help urgently.",
-        "category": "IT Support"
-    },
-    {
-        "subject": "Request for sick leave",
-        "body": "I am not well and need 2 days of sick leave.",
-        "category": "Leave Request"
-    },
-    {
-        "subject": "Question about health insurance benefits",
-        "body": "Can you explain what health benefits are available?",
-        "category": "Employee Benefits"
-    },
-    {
-        "subject": "Complaint about manager",
-        "body": "I want to report workplace harassment from my team lead.",
-        "category": "Grievance"
-    },
+    # Payroll
+    {"subject": "Salary increment not received", "body": "My increment is missing for June", "category": "Payroll"},
+    {"subject": "Salary delay", "body": "My salary has not come this month", "category": "Payroll"},
+    {"subject": "Bonus query", "body": "I want to know my annual bonus details", "category": "Payroll"},
+
+    # IT Support
+    {"subject": "Laptop not working", "body": "Laptop suddenly shut down and won't turn on", "category": "IT Support"},
+    {"subject": "VPN not connecting", "body": "VPN blocked, unable to access office network", "category": "IT Support"},
+    {"subject": "Email login issue", "body": "Unable to login into office email", "category": "IT Support"},
+
+    # Leave Request
+    {"subject": "Sick leave request", "body": "I need 2 days sick leave", "category": "Leave"},
+    {"subject": "Casual leave", "body": "Please approve my casual leave for tomorrow", "category": "Leave"},
+    {"subject": "Emergency leave", "body": "Urgent family issue, need emergency leave", "category": "Leave"},
+
+    # Benefits
+    {"subject": "Insurance details", "body": "Please share medical insurance coverage", "category": "Benefits"},
+    {"subject": "PF withdrawal process", "body": "How can I withdraw my PF amount?", "category": "Benefits"},
+    {"subject": "Health benefits", "body": "Need details of employee health benefits", "category": "Benefits"},
+
+    # Grievance
+    {"subject": "Harassment complaint", "body": "I want to report workplace harassment", "category": "Grievance"},
+    {"subject": "Manager misbehaving", "body": "My manager is constantly shouting unnecessarily", "category": "Grievance"},
+    {"subject": "Team conflict", "body": "Facing conflict with teammates, need HR support", "category": "Grievance"},
 ]
 
-# Convert to DataFrame
 df = pd.DataFrame(SAMPLE_DATA)
 df["text"] = df["subject"] + " " + df["body"]
 
-# -------------------------------------
-# Text Cleaning Function
-# -------------------------------------
+
+# ---------------------------------------------------------
+# Text cleaning
+# ---------------------------------------------------------
 def clean_text(text):
     text = text.lower()
     text = re.sub(r"http\S+|www\S+|https\S+", " ", text)
@@ -65,93 +65,92 @@ def clean_text(text):
 
 df["cleaned"] = df["text"].apply(clean_text)
 
-# -------------------------------------
-# AUTO MODEL TRAINING
-# -------------------------------------
+
+# ---------------------------------------------------------
+# ALWAYS Safe Train/Test Split
+# ---------------------------------------------------------
 tfidf = TfidfVectorizer(max_features=5000, ngram_range=(1,2))
 X = tfidf.fit_transform(df["cleaned"])
 y = df["category"]
 
+# ❗ No stratify → always safe
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, random_state=42, stratify=y
+    X, y, test_size=0.25, random_state=42
 )
 
 model = LogisticRegression(max_iter=2000)
 model.fit(X_train, y_train)
 
-# -------------------------------------
-# STREAMLIT UI
-# -------------------------------------
-st.title("📧 HR AUTOMATIC EMAIL CATEGORIZATION SYSTEM")
 
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📮 Classify Email", "📁 Batch Prediction"])
+# ---------------------------------------------------------
+# Streamlit UI
+# ---------------------------------------------------------
+st.title("📧 HR Automatic Email Categorization System (Cloud-Ready)")
 
 
-# ------------------ TAB 1 - DASHBOARD ------------------
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "💬 Classify Email", "📁 Batch Prediction"])
+
+# ------------------------ TAB 1 -------------------------
 with tab1:
-    st.header("📊 Data Dashboard & Analytics")
+    st.header("📊 Data Insights & Analytics")
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("Category Distribution")
-        cat_count = df["category"].value_counts()
+        counts = df["category"].value_counts()
         fig, ax = plt.subplots(figsize=(5,3))
-        sns.barplot(x=cat_count.values, y=cat_count.index, palette="viridis")
+        sns.barplot(x=counts.values, y=counts.index, ax=ax, palette="viridis")
         st.pyplot(fig)
 
     with col2:
         st.subheader("Word Cloud")
-        text = " ".join(df["cleaned"].tolist())
+        text = " ".join(df["cleaned"])
         wc = WordCloud(width=800, height=300, background_color="white").generate(text)
         fig, ax = plt.subplots(figsize=(5,3))
         ax.imshow(wc, interpolation="bilinear")
         ax.axis("off")
         st.pyplot(fig)
 
-    st.subheader("Top Words Per Category")
+    st.subheader("Top Keywords Per Category")
     for cat in df["category"].unique():
         st.markdown(f"### {cat}")
         words = " ".join(df[df["category"] == cat]["cleaned"]).split()
-        common = Counter(words).most_common(5)
-        st.write(dict(common))
+        st.write(dict(Counter(words).most_common(5)))
 
 
-# ------------------ TAB 2 - SINGLE EMAIL PREDICTION ------------------
+# ------------------------ TAB 2 -------------------------
 with tab2:
-    st.header("📮 Classify a Single Email")
+    st.header("💬 Classify a Single Email")
 
-    subject_in = st.text_input("Email Subject")
-    body_in = st.text_area("Email Body")
+    s = st.text_input("Subject")
+    b = st.text_area("Body")
 
-    if st.button("Classify Email"):
-        raw = subject_in + " " + body_in
+    if st.button("Predict Category"):
+        raw = s + " " + b
         cleaned = clean_text(raw)
         X_infer = tfidf.transform([cleaned])
         pred = model.predict(X_infer)[0]
         st.success(f"Predicted Category: **{pred}**")
 
 
-# ------------------ TAB 3 - BATCH PREDICTION ------------------
+# ------------------------ TAB 3 -------------------------
 with tab3:
-    st.header("📁 Upload File for Batch Prediction")
+    st.header("📁 Batch Prediction")
 
-    uploaded = st.file_uploader("Upload CSV with columns: subject, body", type=["csv"])
+    file = st.file_uploader("Upload CSV (columns: subject, body)", type=["csv"])
 
-    if uploaded:
-        data = pd.read_csv(uploaded)
-
+    if file:
+        data = pd.read_csv(file)
         if "subject" not in data.columns or "body" not in data.columns:
-            st.error("CSV must contain 'subject' and 'body' columns!")
+            st.error("CSV must contain 'subject' and 'body'.")
         else:
             data["text"] = data["subject"] + " " + data["body"]
             data["cleaned"] = data["text"].apply(clean_text)
-
             Xb = tfidf.transform(data["cleaned"])
-            preds = model.predict(Xb)
+            data["predicted_category"] = model.predict(Xb)
 
-            data["predicted_category"] = preds
-            st.write(data)
+            st.dataframe(data)
 
             csv = data.to_csv(index=False).encode("utf-8")
-            st.download_button("Download Predictions", csv, "predictions.csv", "text/csv")
+            st.download_button("Download Results", csv, "results.csv", "text/csv")
