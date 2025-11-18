@@ -414,48 +414,138 @@ tab_dashboard, tab_single, tab_bulk, tab_sim, tab_dept, tab_admin = tabs
 # Dashboard (UI-3 polished)
 # ---------------------------
 with tab_dashboard:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.subheader("Quick Overview")
-    # top stats: show compact professional cards
-    col1,col2,col3,col4 = st.columns(4)
-    total_emails = len(df)
-    unique_cats = df['category'].nunique()
-    total_depts = df['department'].nunique()
-    model_status = st.session_state.get('model_name','Not trained') if 'model' in st.session_state else 'Not trained'
-    col1.markdown('<div class="card"><div class="card-title">Total emails</div><div class="big-num">'+str(total_emails)+'</div></div>', unsafe_allow_html=True)
-    col2.markdown('<div class="card"><div class="card-title">Categories</div><div class="big-num">'+str(unique_cats)+'</div></div>', unsafe_allow_html=True)
-    col3.markdown('<div class="card"><div class="card-title">Departments</div><div class="big-num">'+str(total_depts)+'</div></div>', unsafe_allow_html=True)
-    col4.markdown('<div class="card"><div class="card-title">Model</div><div class="big-num">'+str(model_status)+'</div></div>', unsafe_allow_html=True)
+    st.header("📊 HR Overview Dashboard")
+    st.markdown("Insights from employee communication to help HR manage operations efficiently.")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    df_dash = df.copy()
 
-    # Category distribution + wordcloud
-    c1,c2 = st.columns([1,1])
-    with c1:
-        st.subheader("Category distribution")
-        counts = df['category'].value_counts()
-        fig,ax = plt.subplots(figsize=(8, max(3,0.25*len(counts))))
-        sns.barplot(y=counts.index, x=counts.values, palette="Blues_d", ax=ax)
-        ax.set_xlabel("Count"); ax.set_ylabel("")
-        st.pyplot(fig)
-    with c2:
-        st.subheader("Common words")
-        try:
-            text = " ".join(df['cleaned_text'].tolist())
-            wc = WordCloud(width=900, height=300, background_color='white').generate(text)
-            fig, ax = plt.subplots(figsize=(8,3))
-            ax.imshow(wc, interpolation='bilinear'); ax.axis('off'); st.pyplot(fig)
-        except:
-            st.info("Not enough text for wordcloud")
+    # -------- Payroll Issue Count --------
+    payroll_keywords = [
+        "salary", "not credited", "payslip", "bonus", "arrears",
+        "increment", "hike", "payment delay", "payroll", "ctc",
+        "overtime", "wage", "deduction"
+    ]
 
-    # If model trained show small evaluation block
-    if 'model' in st.session_state:
-        st.subheader("Model evaluation snapshot")
-        metrics = st.session_state.get('metrics',{})
-        st.write(f"Model: **{st.session_state.get('model_name')}** • Accuracy: **{metrics.get('accuracy',0):.3f}** • Weighted F1: **{metrics.get('f1_weighted',0):.3f}**")
-        # show small classification report toggle
-        if st.button("Show classification report"):
-            st.text(st.session_state.get('report','(no report)'))
+    def has_payroll_issue(text):
+        text = text.lower()
+        return any(kw in text for kw in payroll_keywords)
+
+    df_dash["is_payroll"] = df_dash["text"].apply(has_payroll_issue)
+    payroll_count = df_dash["is_payroll"].sum()
+
+    # -------- Trending Category --------
+    trending_category = df_dash["category"].value_counts().idxmax()
+
+    # -------- Sentiment Score --------
+    positive_words = ["thank you", "appreciate", "good", "resolved", "great"]
+    negative_words = ["issue", "error", "not working", "delay", "problem", "complaint"]
+
+    def sentiment_score(text):
+        text = text.lower()
+        score = 0
+        for w in positive_words:
+            if w in text: score += 1
+        for w in negative_words:
+            if w in text: score -= 1
+        return score
+
+    df_dash["sentiment"] = df_dash["text"].apply(sentiment_score)
+    avg_sentiment = df_dash["sentiment"].mean()
+
+    sentiment_label = (
+        "Positive 😀" if avg_sentiment > 0.5
+        else "Negative 😟" if avg_sentiment < -0.5
+        else "Neutral 😐"
+    )
+
+    # -------- Urgency Score --------
+    urgent_keywords = ["urgent", "immediate", "asap", "not credited", "delay", "escalate"]
+
+    def urgency_level(text):
+        text = text.lower()
+        return sum(kw in text for kw in urgent_keywords)
+
+    df_dash["urgency"] = df_dash["text"].apply(urgency_level)
+    urgency_score = int((df_dash["urgency"].mean() / 3) * 100)
+    urgency_score = min(100, urgency_score)
+
+    # -------- Upcoming Training/Event --------
+    event_keywords = ["training", "session", "webinar", "meeting", "event", "workshop"]
+
+    date_pattern = r"\b(2025|2026|\bJan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b"
+
+    def has_event(text):
+        text = text.lower()
+        return any(kw in text for kw in event_keywords) or re.search(date_pattern, text)
+
+    df_dash["event_flag"] = df_dash["text"].apply(has_event)
+    event_count = df_dash["event_flag"].sum()
+
+    # -------- KPI CARDS LAYOUT --------
+    k1, k2, k3, k4, k5 = st.columns(5)
+
+    with k1:
+        st.markdown(
+            f"""
+            <div class="card">
+                <h4>Payroll Issues</h4>
+                <h3 style="color:#0b5ed7">{payroll_count}</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with k2:
+        st.markdown(
+            f"""
+            <div class="card">
+                <h4>Trending Category</h4>
+                <h3 style="color:#0b5ed7">{trending_category}</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with k3:
+        st.markdown(
+            f"""
+            <div class="card">
+                <h4>Sentiment</h4>
+                <h3 style="color:#0b5ed7">{sentiment_label}</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with k4:
+        st.markdown(
+            f"""
+            <div class="card">
+                <h4>Urgency Level</h4>
+                <h3 style="color:#0b5ed7">{urgency_score} / 100</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with k5:
+        st.markdown(
+            f"""
+            <div class="card">
+                <h4>Upcoming Events / Trainings</h4>
+                <h3 style="color:#0b5ed7">{event_count}</h3>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # -------- Category Distribution Chart --------
+    st.subheader("📌 Category Trend")
+
+    counts = df["category"].value_counts()
+    fig, ax = plt.subplots(figsize=(9, 4 + len(counts)*0.25))
+    sns.barplot(x=counts.values, y=counts.index, palette="Blues_d", ax=ax)
+    st.pyplot(fig)
 
 # ---------------------------
 # Single classify (simple, no suggestions)
