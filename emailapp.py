@@ -1,445 +1,590 @@
-# ==========================================================
-# HR EMAIL CLASSIFIER — FINAL UI-REFINED VERSION
-# ==========================================================
+# =====================================================
+# HR EMAIL CLASSIFIER — PRO-MAX (UI-2..UI-5 combined)
+# Single-file Streamlit app — drop into emailapp.py
+# =====================================================
 
-import os
-import re
-import string
-import random
+import os, re, random, string
+from collections import Counter, deque
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    classification_report,
-    confusion_matrix,
-)
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 
-# -----------------------------------------------------
-# Page UI Style — CLEAN CORPORATE THEME
-# -----------------------------------------------------
-st.set_page_config(page_title="HR Email Classifier", layout="wide")
-
-st.markdown(
-    """
-    <style>
-    .stApp { background: #f5f6f8; color:#0f172a; }
-
-    .main-header {
-        background: #0b5ed7;
-        padding: 22px;
-        border-radius: 8px;
-        color: white;
-        text-align: left;
-    }
-
-    .main-header h2 {
-        margin: 0;
-        font-weight: 600;
-    }
-
-    .main-header p {
-        margin: 0;
-        font-size: 15px;
-        opacity: 0.9;
-    }
-
-    .card {
-        background: white;
-        padding: 16px;
-        border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        margin-bottom: 18px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Cleaner professional header
-st.markdown(
-    """
-    <div class="main-header">
-        <h2>HR Email Classification System</h2>
-        <p>Accurately categorize employee emails using Machine Learning</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-st.write("")
-
-# -----------------------------------------------------
-# Constants
-# -----------------------------------------------------
-DATA_FILE = "hr_support_emails_2025_6.json"
+# ---------------------------
+# App config
+# ---------------------------
+st.set_page_config(page_title="HR Email Classifier — Pro-Max", layout="wide", initial_sidebar_state="expanded")
 RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+
+DATA_FILE = "hr_support_emails_2025_6.json"
+
+# augmentation / synth
+MINORITY_THRESHOLD_DEFAULT = 15
 SYNTH_PER_OTHER_CLASS = 30
 SYNTH_TE_COUNT = 30
 SYNTH_PAYROLL_COUNT = 400
 BOOST_WEIGHT = 1.2
-MINORITY_THRESHOLD_DEFAULT = 15
 
-random.seed(RANDOM_SEED)
-np.random.seed(RANDOM_SEED)
+# ---------------------------
+# THEMES (UI-2..UI-4)
+# ---------------------------
+THEMES = {
+    "Modern Gradient": {
+        "bg":"linear-gradient(90deg,#6a11cb 0%, #2575fc 100%)",
+        "panel_bg":"rgba(255,255,255,0.96)",
+        "text_color":"#0f1724",
+        "muted":"#334155"
+    },
+    "Corporate Clean": {
+        "bg":"#f6f8fa",
+        "panel_bg":"#ffffff",
+        "text_color":"#0f1724",
+        "muted":"#6b7280"
+    },
+    "Dark Professional": {
+        "bg":"#0b1220",
+        "panel_bg":"#0f1724",
+        "text_color":"#e6eef8",
+        "muted":"#9aa6bb"
+    },
+    "Minimal White": {
+        "bg":"#ffffff",
+        "panel_bg":"#ffffff",
+        "text_color":"#0b1220",
+        "muted":"#475569"
+    }
+}
 
-# -----------------------------------------------------
-# Text Cleaning
-# -----------------------------------------------------
+# ---------------------------
+# Theme selector in sidebar
+# ---------------------------
+st.sidebar.title("Pro-Max Controls")
+theme_choice = st.sidebar.selectbox("Theme", list(THEMES.keys()), index=1)
+theme = THEMES[theme_choice]
+
+# optional logo url
+logo_url = st.sidebar.text_input("Logo URL (optional)", value="")
+
+# small layout tweaks via CSS per theme
+st.markdown(f"""
+    <style>
+      .app-header {{
+        background: {theme['bg']};
+        padding: 18px;
+        border-radius: 10px;
+        color: white;
+      }}
+      .panel {{
+        background: {theme['panel_bg']};
+        border-radius: 10px;
+        padding: 12px;
+        box-shadow: 0 6px 18px rgba(16,24,40,0.06);
+      }}
+      .muted {{ color: {theme['muted']}; }}
+      .big-num {{ font-size: 22px; font-weight:700; color: {theme['text_color']}; }}
+      .card-title {{ font-size:14px; color:{theme['muted']}; margin:0 0 6px 0; }}
+    </style>
+""", unsafe_allow_html=True)
+
+# ---------------------------
+# Header (clean & professional)
+# ---------------------------
+logo_html = f'<img src="{logo_url}" style="height:48px; margin-right:12px; border-radius:6px;">' if logo_url else ""
+st.markdown(f"""
+<div class="app-header" style="display:flex; align-items:center;">
+  <div style="flex:1; display:flex; align-items:center;">
+    {logo_html}
+    <div>
+      <div style="font-size:20px; font-weight:700">HR Email Classifier — Pro-Max</div>
+      <div style="font-size:13px; opacity:0.95">Accurate email triage for HR teams — Payroll detection, Events, IT, Leave & more</div>
+    </div>
+  </div>
+  <div style="text-align:right; min-width:260px;">
+    <div style="font-size:12px; color:rgba(255,255,255,0.9)"><b>Theme:</b> {theme_choice}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+st.write("")
+
+# ---------------------------
+# Utilities
+# ---------------------------
 def clean_text(text):
     text = str(text).lower()
     text = re.sub(r"\S+@\S+", " ", text)
     text = re.sub(r"http\S+|www\S+|https\S+", " ", text)
     text = re.sub(r"\d+", " ", text)
     text = text.translate(str.maketrans("", "", string.punctuation))
-    tokens = [t for t in text.split() if len(t) > 2]
+    tokens = [t for t in text.split() if len(t)>2]
     return " ".join(tokens)
 
 def safe_read_json(path):
     if os.path.exists(path):
         try:
             return pd.read_json(path)
-        except:
-            st.error("Invalid JSON format.")
+        except Exception as e:
+            st.sidebar.error(f"Failed to load JSON: {e}")
             return None
-    st.error("Dataset not found.")
+    st.sidebar.warning("Dataset not found in repo root. Upload via sidebar or add file to repo.")
     return None
 
+# ---------------------------
+# Category keywords + seeds (all enhanced)
+# ---------------------------
+CATEGORY_TOPICS = {
+    "Event Coordination": ["event","seminar","townhall","registration","venue","logistics","volunteer"],
+    "HR Request": ["experience certificate","relieving","onboarding","id card","documents","letter"],
+    "Compliance": ["policy","compliance","audit","tds","tax","form16","regulation"],
+    "Training & Development": ["training","workshop","webinar","bootcamp","skill","learning"],
+    "Client Communication": ["client","deliverable","feedback","meeting","proposal"],
+    "Leave Management": ["leave","sick","casual","vacation","absence","approval"],
+    "Finance": ["reimbursement","invoice","expense","travel reimbursement","payment"],
+    "IT Support": ["login","password","vpn","laptop","email login","software","network"],
+    "Security": ["suspicious","access","security","unauthorized","breach","badge"],
+    "Project Update": ["status","milestone","deadline","release","progress","sprint"],
+    "Payroll / Salary Issues": [
+        "salary","salary not credited","salary delay","payslip",
+        "payslip not received","salary discrepancy","bonus not received",
+        "arrears","incorrect salary amount","bank transfer failed",
+        "payroll correction","tax deduction issue","salary pending",
+        "overtime payment","payment not received","salary missing",
+        "salary not received","salary clarification","payroll"
+    ],
+}
+
+CATEGORY_KEYWORDS = {k:set([w.lower() for w in v]) for k,v in CATEGORY_TOPICS.items()}
+
+# ---------------------------
+# Synthetic generator
+# ---------------------------
+GENERIC_TEMPLATES = [
+    "Hello Team,\n\nWe are conducting a {topic} on {date}. Kindly attend.\n\nThanks,\n{sender}",
+    "Hi,\n\nInvitation: {topic}. Please register.\n\nRegards,\n{sender}",
+    "Greetings,\n\nThere will be a session about {topic} next week.\n\nBest,\n{sender}"
+]
+SENDER_POOL = ["Ankit Sharma","Priya Singh","Rahul Verma","Neha Patel","Karan Mehta","Aisha Khan"]
+
+def generate_samples(category, n):
+    seeds = CATEGORY_TOPICS.get(category, ["general HR"])
+    subs,bods = [],[]
+    for _ in range(n):
+        topic = random.choice(seeds)
+        sender = random.choice(SENDER_POOL)
+        template = random.choice(GENERIC_TEMPLATES)
+        # random date-ish text to diversify
+        date = f"{random.randint(1,28)} {random.choice(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])}"
+        body = template.format(topic=topic, date=date, sender=sender)
+        subj = f"{topic.title()}"
+        subs.append(subj)
+        bods.append(body)
+    return subs,bods
+
+# ---------------------------
+# TF-IDF + models + boosting
+# ---------------------------
 def softmax(x):
     e = np.exp(x - np.max(x))
     return e / e.sum()
 
-# -----------------------------------------------------
-# Category Keywords
-# -----------------------------------------------------
-CATEGORY_TOPICS = {
-    "Event Coordination": ["event","seminar","townhall","venue","logistics"],
-    "HR Request": ["experience certificate","id card","relieving","documents"],
-    "Compliance": ["policy","tds","tax","audit","form16"],
-    "Training & Development": ["training","session","workshop","learning"],
-    "Client Communication": ["client","proposal","meeting","feedback"],
-    "Leave Management": ["leave","sick","casual","vacation"],
-    "Finance": ["reimbursement","invoice","expense","payment"],
-    "IT Support": ["login","password","vpn","laptop","network"],
-    "Security": ["access","security","unauthorized","breach"],
-    "Project Update": ["status","milestone","deadline","sprint","progress"],   # FIXED
-    "Payroll / Salary Issues": [
-        "salary","salary delay","payslip","salary not received","bonus",
-        "arrears","tax deduction","overtime payment","payroll correction"
-    ],
-}
-
-CATEGORY_KEYWORDS = {
-    cat: set([kw.lower() for kw in kws]) for cat, kws in CATEGORY_TOPICS.items()
-}
-
-# -----------------------------------------------------
-# Synthetic Generator
-# -----------------------------------------------------
-GENERIC_TOPICS = ["general", "policy clarification", "update"]
-TEMPLATES = [
-    "Hello Team,\n\nWe have a session on {topic}. Please join.\n\nThanks,\n{sender}",
-    "Hi All,\n\nInvitation: {topic}. Kindly register.\n\nRegards,\n{sender}",
-    "Greetings,\n\nUpcoming workshop: {topic}.\n\nBest,\n{sender}",
-]
-SENDERS = ["Ankit", "Priya", "Rahul", "Neha", "Karan"]
-
-def generate_samples(category, n):
-    seeds = CATEGORY_TOPICS.get(category, GENERIC_TOPICS)
-    subs, bods = [], []
-    for _ in range(n):
-        topic = random.choice(seeds)
-        template = random.choice(TEMPLATES)
-        sender = random.choice(SENDERS)
-        body = template.format(topic=topic, sender=sender)
-        subs.append(f"{topic.title()}")
-        bods.append(body)
-    return subs, bods
-
-# -----------------------------------------------------
-# Prediction Engine (Boosted)
-# -----------------------------------------------------
-def predict_with_boost(model, tfidf, raw_text, classes):
+def predict_with_boost(model, tfidf, raw_text, classes, boost_weight=BOOST_WEIGHT):
     cleaned = clean_text(raw_text)
     X = tfidf.transform([cleaned])
-
+    # base scores
     if hasattr(model, "predict_proba"):
         base = model.predict_proba(X)[0]
     else:
         try:
             df = model.decision_function(X)
-            if df.ndim == 1: df = np.vstack([-df, df]).T
+            if df.ndim == 1:
+                df = np.vstack([-df, df]).T
             base = softmax(df[0])
         except:
-            base = np.ones(len(classes)) / len(classes)
-
+            base = np.ones(len(classes))/len(classes)
+    # keyword nudge
     words = set(cleaned.split())
-    kw_scores = np.zeros(len(classes))
-
-    for i, cat in enumerate(classes):
+    kw = np.zeros(len(classes))
+    for i,c in enumerate(classes):
         matches = 0
-        for kw in CATEGORY_KEYWORDS.get(cat, []):
-            if " " in kw and kw in cleaned:
+        for k in CATEGORY_KEYWORDS.get(c,[]):
+            if " " in k and k in cleaned:
                 matches += 1
-            elif kw in words:
+            elif k in words:
                 matches += 1
-        kw_scores[i] = min(matches / 2.0, 1.0)
-
-    final = base + BOOST_WEIGHT * kw_scores
-    final /= final.sum()
-
+        kw[i] = min(matches/2.0, 1.0)
+    final = base + boost_weight * kw
+    final = final / final.sum()
     order = np.argsort(final)[::-1]
-    best = (classes[order[0]], float(final[order[0]]))
+    ranked = [(classes[i], float(final[i])) for i in order]
+    return ranked[0], ranked
 
-    return best
-
-# -----------------------------------------------------
-# Load Dataset
-# -----------------------------------------------------
-st.sidebar.header("Dataset & Model")
-uploaded = st.sidebar.file_uploader("Upload dataset (.json)", type=["json"])
-
+# ---------------------------
+# Load dataset (repo or upload)
+# ---------------------------
+st.sidebar.subheader("Dataset")
+uploaded = st.sidebar.file_uploader("Upload dataset JSON (optional)", type=["json"])
 if uploaded:
-    df = pd.read_json(uploaded)
-    st.sidebar.success("Dataset uploaded.")
+    try:
+        df = pd.read_json(uploaded)
+        st.sidebar.success("Uploaded dataset loaded.")
+    except Exception as e:
+        st.sidebar.error(f"Failed to read uploaded JSON: {e}")
+        st.stop()
 else:
     df = safe_read_json(DATA_FILE)
-    if df is None: st.stop()
+    if df is None:
+        st.stop()
 
-df["subject"] = df["subject"].fillna("")
-df["body"] = df["body"].fillna("")
-df["text"] = df["subject"] + " " + df["body"]
-df["cleaned_text"] = df["text"].apply(clean_text)
+# required fields check
+if not {"subject","body","category"}.issubset(set(df.columns)):
+    st.error("Dataset must contain columns: subject, body, category")
+    st.stop()
 
-# -----------------------------------------------------
-# Training Engine
-# -----------------------------------------------------
-def augment_and_train(df_base):
+# optional department field; if not present we create a dummy distribution
+if "department" not in df.columns:
+    # create a balanced-ish pseudo-department column for analytics demo
+    depts = ["Operations","IT","Development","Data Science","Marketing","Product","QA","Finance","HR","Admin","Sales","Support"]
+    df["department"] = [random.choice(depts) for _ in range(len(df))]
 
-    dfw = df_base.copy()
-    counts = dfw["category"].value_counts()
-    minority = counts[counts < MINORITY_THRESHOLD_DEFAULT].index.tolist()
+# text fields
+df['subject'] = df['subject'].fillna("")
+df['body'] = df['body'].fillna("")
+df['text'] = (df['subject'] + " " + df['body']).str.strip()
+df = df[df['text'].str.len()>0].reset_index(drop=True)
+df['cleaned_text'] = df['text'].apply(clean_text)
 
+# ---------------------------
+# Augment & train function (hidden details)
+# ---------------------------
+def augment_and_train(df_in,
+                      minority_threshold=MINORITY_THRESHOLD_DEFAULT,
+                      synth_other=SYNTH_PER_OTHER_CLASS,
+                      synth_te=SYNTH_TE_COUNT,
+                      synth_payroll=SYNTH_PAYROLL_COUNT):
+    dfw = df_in.copy()
+    counts = dfw['category'].value_counts()
+    minority = counts[counts < minority_threshold].index.tolist()
     synth_rows = []
 
-    # Payroll boost — 400 samples
-    subs, bods = generate_samples("Payroll / Salary Issues", SYNTH_PAYROLL_COUNT)
-    for s, b in zip(subs, bods):
-        synth_rows.append({
-            "subject": s, "body": b, "text": s+" "+b,
-            "category": "Payroll / Salary Issues",
-            "cleaned_text": clean_text(s+" "+b)
-        })
+    # Add payroll always
+    payroll_label = "Payroll / Salary Issues"
+    subs,bods = generate_samples(payroll_label, synth_payroll)
+    for s,b in zip(subs,bods):
+        synth_rows.append({"subject":s, "body":b, "text": s+" "+b, "category": payroll_label, "cleaned_text": clean_text(s+" "+b)})
 
-    # TE for two classes
+    # TE30 for two categories
     for cat in ["Training & Development", "Event Coordination"]:
-        subs, bods = generate_samples(cat, SYNTH_TE_COUNT)
-        for s, b in zip(subs, bods):
-            synth_rows.append({
-                "subject": s, "body": b, "text": s+" "+b,
-                "category": cat,
-                "cleaned_text": clean_text(s+" "+b)
-            })
+        if cat in dfw['category'].unique():
+            subs,bods = generate_samples(cat, synth_te)
+            for s,b in zip(subs,bods):
+                synth_rows.append({"subject":s, "body":b, "text": s+" "+b, "category": cat, "cleaned_text": clean_text(s+" "+b)})
 
-    # S3 for minority
+    # S3 for minority other categories
     for cat in minority:
-        if cat in ["Payroll / Salary Issues", "Training & Development", "Event Coordination"]:
+        if cat in ["Training & Development", "Event Coordination", payroll_label]:
             continue
-        subs, bods = generate_samples(cat, SYNTH_PER_OTHER_CLASS)
-        for s, b in zip(subs, bods):
-            synth_rows.append({
-                "subject": s, "body": b, "text": s+" "+b,
-                "category": cat,
-                "cleaned_text": clean_text(s+" "+b)
-            })
+        subs,bods = generate_samples(cat, synth_other)
+        for s,b in zip(subs,bods):
+            synth_rows.append({"subject":s, "body":b, "text": s+" "+b, "category": cat, "cleaned_text": clean_text(s+" "+b)})
 
-    df_aug = dfw.copy()
     if synth_rows:
         df_synth = pd.DataFrame(synth_rows)
-        df_aug = pd.concat([df_aug, df_synth]).sample(frac=1, random_state=RANDOM_SEED)
-
-    tfidf = TfidfVectorizer(
-        max_df=0.9, min_df=1,
-        ngram_range=(1,2),
-        sublinear_tf=True,
-        max_features=40000
-    )
-    X = tfidf.fit_transform(df_aug["cleaned_text"])
-    y = df_aug["category"]
-
-    if (y.value_counts() >= 2).all():
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.18, random_state=RANDOM_SEED, stratify=y
-        )
+        df_aug = pd.concat([dfw, df_synth], ignore_index=True).sample(frac=1, random_state=RANDOM_SEED).reset_index(drop=True)
     else:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.18, random_state=RANDOM_SEED
-        )
+        df_aug = dfw
 
-    models = {
-        "LogisticRegression": LogisticRegression(max_iter=2000, solver="liblinear", class_weight="balanced"),
+    tfidf = TfidfVectorizer(max_df=0.9, min_df=1, ngram_range=(1,2), sublinear_tf=True, max_features=40000)
+    X = tfidf.fit_transform(df_aug['cleaned_text'].tolist())
+    y = df_aug['category'].values
+
+    # safe split
+    vc = pd.Series(y).value_counts()
+    if (vc >= 2).all():
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.18, random_state=RANDOM_SEED, stratify=y)
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.18, random_state=RANDOM_SEED)
+
+    # candidate models
+    candidates = {
+        "LogisticRegression": LogisticRegression(max_iter=2000, solver='liblinear', class_weight='balanced'),
         "LinearSVC": LinearSVC(max_iter=5000),
-        "RandomForest": RandomForestClassifier(n_estimators=200, random_state=RANDOM_SEED)
+        "RandomForest": RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=RANDOM_SEED)
     }
 
-    scores = {}
-    for name, model in models.items():
+    cv_scores = {}
+    for name, mdl in candidates.items():
         try:
-            f1 = np.mean(
-                cross_val_score(model, X_train, y_train, scoring="f1_weighted", cv=3)
-            )
+            sc = float(np.mean(cross_val_score(mdl, X_train, y_train, cv=3, scoring='f1_weighted', n_jobs=-1)))
         except:
-            f1 = 0
-        scores[name] = f1
+            sc = 0.0
+        cv_scores[name] = sc
 
-    best_name = max(scores, key=scores.get)
-    best_model = models[best_name]
-
+    best_name = max(cv_scores, key=cv_scores.get)
+    best_model = candidates[best_name]
     best_model.fit(X_train, y_train)
     preds = best_model.predict(X_test)
+    acc = accuracy_score(y_test, preds)
+    f1w = f1_score(y_test, preds, average='weighted')
 
-    return {
-        "model": best_model,
-        "tfidf": tfidf,
-        "model_name": best_name,
-        "metrics": {
-            "accuracy": accuracy_score(y_test, preds),
-            "f1_weighted": f1_score(y_test, preds, average="weighted")
-        },
-        "confusion": (y_test, preds),
-    }
+    return {"tfidf":tfidf, "model":best_model, "model_name":best_name, "metrics":{"accuracy":acc,"f1_weighted":f1w}, "report": classification_report(y_test,preds, zero_division=0), "confusion":(y_test,preds), "augmented_df": df_aug}
 
-# -----------------------------------------------------
-# Sidebar — Update Model Button
-# -----------------------------------------------------
-if st.sidebar.button("🔄 Retrain Model"):
-    with st.spinner("Training model..."):
-        result = augment_and_train(df)
-        st.session_state.update(result)
-        st.sidebar.success("Model updated successfully!")
+# ---------------------------
+# Session storage initialization
+# ---------------------------
+if 'corrections' not in st.session_state:
+    st.session_state['corrections'] = []   # store (text, correct_label)
+if 'inbox_queue' not in st.session_state:
+    st.session_state['inbox_queue'] = deque(maxlen=500)
 
-# -----------------------------------------------------
-# Tabs
-# -----------------------------------------------------
-tabs = st.tabs(["📊 Dashboard", "📮 Classify Email", "📁 Bulk Categorization"])
-dashboard_tab, classify_tab, bulk_tab = tabs
+# ---------------------------
+# Sidebar controls & retrain
+# ---------------------------
+st.sidebar.markdown("### Model & Data")
+if st.sidebar.button("🔄 Update / Retrain Model"):
+    with st.spinner("Retraining model (this may take ~30-60s)..."):
+        artifacts = augment_and_train(df)
+        st.session_state['tfidf'] = artifacts['tfidf']
+        st.session_state['model'] = artifacts['model']
+        st.session_state['model_name'] = artifacts['model_name']
+        st.session_state['metrics'] = artifacts['metrics']
+        st.session_state['report'] = artifacts['report']
+        st.session_state['confusion'] = artifacts['confusion']
+        st.session_state['augmented_df'] = artifacts['augmented_df']
+        st.sidebar.success(f"Model updated — {artifacts['model_name']} | Acc {artifacts['metrics']['accuracy']:.3f}")
 
-# -----------------------------------------------------
-# Dashboard
-# -----------------------------------------------------
-with dashboard_tab:
-    st.header("📊 Dashboard Overview")
+# quick model info
+if 'model' in st.session_state:
+    st.sidebar.markdown(f"**Active model:** {st.session_state.get('model_name')}")
+    st.sidebar.markdown(f"**Acc:** {st.session_state.get('metrics',{}).get('accuracy','-'):.3f}  •  **F1:** {st.session_state.get('metrics',{}).get('f1_weighted','-'):.3f}")
 
-    counts = df["category"].value_counts()
+# department filter
+departments = sorted(df['department'].unique().tolist())
+dept_filter = st.sidebar.multiselect("Filter departments (multi)", options=departments, default=[])
 
-    st.subheader("Category Distribution")
-    fig, ax = plt.subplots(figsize=(9, 4 + len(counts)*0.25))
-    sns.barplot(x=counts.values, y=counts.index, palette="Blues_d", ax=ax)
-    st.pyplot(fig)
-
-    st.subheader("Word Cloud")
-    try:
-        wc = WordCloud(width=1000, height=300, background_color="white").generate(
-            " ".join(df["cleaned_text"])
-        )
-        fig_wc, ax_wc = plt.subplots(figsize=(10, 3))
-        ax_wc.imshow(wc, interpolation="bilinear")
-        ax_wc.axis("off")
-        st.pyplot(fig_wc)
-    except:
-        st.info("Not enough text to generate word cloud.")
-
-    if "model" in st.session_state and "confusion" in st.session_state:
-        st.subheader("Confusion Matrix")
-        y_test, preds = st.session_state["confusion"]
-        labels = sorted(list(set(y_test)))
-        cm = confusion_matrix(y_test, preds, labels=labels)
-
-        fig_cm, ax_cm = plt.subplots(figsize=(10, 6))
-        sns.heatmap(
-            cm, annot=True, fmt="d", cmap="Blues",
-            xticklabels=labels, yticklabels=labels, ax=ax_cm
-        )
-        st.pyplot(fig_cm)
-
-# -----------------------------------------------------
-# Single Email Classification
-# -----------------------------------------------------
-with classify_tab:
-    st.header("📮 Single Email Classification")
-
-    subj = st.text_input("Subject")
-    body = st.text_area("Body")
-
-    if st.button("Classify Email"):
-        if "model" not in st.session_state:
-            st.error("Please retrain the model first.")
+# inbox simulator controls
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Inbox Simulator")
+sim_mode = st.sidebar.selectbox("Simulator mode", ["Random samples","Generate custom","From dataset"])
+sim_count = st.sidebar.slider("Items to simulate", 1, 50, 6)
+if st.sidebar.button("Load simulator items"):
+    samples = []
+    if sim_mode == "Random samples":
+        # use some sample emails built from dataset + synth
+        idxs = np.random.choice(len(df), min(len(df), sim_count), replace=False)
+        for i in idxs:
+            samples.append({"subject":df.loc[i,'subject'], "body":df.loc[i,'body'], "category":df.loc[i,'category'], "source":"dataset"})
+    elif sim_mode == "Generate custom":
+        # generate synth from a random category
+        cats = list(CATEGORY_TOPICS.keys())
+        for _ in range(sim_count):
+            c = random.choice(cats)
+            s,b = generate_samples(c,1)
+            samples.append({"subject": s[0], "body": b[0], "category": c, "source":"synth"})
+    else:
+        # sample from dataset by department filter
+        pool = df if not dept_filter else df[df['department'].isin(dept_filter)]
+        if pool.empty:
+            st.sidebar.warning("No dataset rows for selected departments.")
         else:
-            raw = (subj + " " + body).strip()
-            classes = list(st.session_state["model"].classes_)
-            pred = predict_with_boost(
-                st.session_state["model"],
-                st.session_state["tfidf"],
-                raw,
-                classes,
-            )
+            idxs = np.random.choice(pool.index, min(len(pool), sim_count), replace=False)
+            for i in idxs:
+                samples.append({"subject":df.loc[i,'subject'], "body":df.loc[i,'body'], "category":df.loc[i,'category'], "source":"dataset"})
+    # push to queue
+    for s in samples:
+        st.session_state['inbox_queue'].append(s)
+    st.sidebar.success(f"Loaded {len(samples)} messages into simulator queue.")
 
-            st.markdown(
-                f"""
-                <div class="card">
-                    <h3>Predicted Category</h3>
-                    <p style="font-size:20px; font-weight:600;">{pred[0]}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+# ---------------------------
+# Main layout with tabs
+# ---------------------------
+tabs = st.tabs(["Dashboard","Classify Email","Bulk Categorize","Inbox Simulator","Department Analytics","Admin"])
+tab_dashboard, tab_single, tab_bulk, tab_sim, tab_dept, tab_admin = tabs
 
-# -----------------------------------------------------
-# Bulk Categorization
-# -----------------------------------------------------
-with bulk_tab:
-    st.header("📁 Bulk Categorization Tool")
+# ---------------------------
+# Dashboard (UI-3 polished)
+# ---------------------------
+with tab_dashboard:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.subheader("Quick Overview")
+    # top stats: show compact professional cards
+    col1,col2,col3,col4 = st.columns(4)
+    total_emails = len(df)
+    unique_cats = df['category'].nunique()
+    total_depts = df['department'].nunique()
+    model_status = st.session_state.get('model_name','Not trained') if 'model' in st.session_state else 'Not trained'
+    col1.markdown('<div class="card"><div class="card-title">Total emails</div><div class="big-num">'+str(total_emails)+'</div></div>', unsafe_allow_html=True)
+    col2.markdown('<div class="card"><div class="card-title">Categories</div><div class="big-num">'+str(unique_cats)+'</div></div>', unsafe_allow_html=True)
+    col3.markdown('<div class="card"><div class="card-title">Departments</div><div class="big-num">'+str(total_depts)+'</div></div>', unsafe_allow_html=True)
+    col4.markdown('<div class="card"><div class="card-title">Model</div><div class="big-num">'+str(model_status)+'</div></div>', unsafe_allow_html=True)
 
-    file = st.file_uploader("Upload CSV (subject, body)", type=["csv"])
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    if file:
-        dfb = pd.read_csv(file)
+    # Category distribution + wordcloud
+    c1,c2 = st.columns([1,1])
+    with c1:
+        st.subheader("Category distribution")
+        counts = df['category'].value_counts()
+        fig,ax = plt.subplots(figsize=(8, max(3,0.25*len(counts))))
+        sns.barplot(y=counts.index, x=counts.values, palette="Blues_d", ax=ax)
+        ax.set_xlabel("Count"); ax.set_ylabel("")
+        st.pyplot(fig)
+    with c2:
+        st.subheader("Common words")
+        try:
+            text = " ".join(df['cleaned_text'].tolist())
+            wc = WordCloud(width=900, height=300, background_color='white').generate(text)
+            fig, ax = plt.subplots(figsize=(8,3))
+            ax.imshow(wc, interpolation='bilinear'); ax.axis('off'); st.pyplot(fig)
+        except:
+            st.info("Not enough text for wordcloud")
 
-        if not {"subject","body"}.issubset(dfb.columns):
+    # If model trained show small evaluation block
+    if 'model' in st.session_state:
+        st.subheader("Model evaluation snapshot")
+        metrics = st.session_state.get('metrics',{})
+        st.write(f"Model: **{st.session_state.get('model_name')}** • Accuracy: **{metrics.get('accuracy',0):.3f}** • Weighted F1: **{metrics.get('f1_weighted',0):.3f}**")
+        # show small classification report toggle
+        if st.button("Show classification report"):
+            st.text(st.session_state.get('report','(no report)'))
+
+# ---------------------------
+# Single classify (simple, no suggestions)
+# ---------------------------
+with tab_single:
+    st.subheader("Classify a single email")
+    s_subj = st.text_input("Subject", key="single_subj")
+    s_body = st.text_area("Body", key="single_body")
+    if st.button("Classify", key="classify_btn"):
+        if 'model' not in st.session_state:
+            st.error("Model not trained. Click 'Update / Retrain Model' in sidebar.")
+        else:
+            text = (s_subj + " " + s_body).strip()
+            if not text:
+                st.warning("Please enter subject or body.")
+            else:
+                classes = list(st.session_state['model'].classes_)
+                best, ranked = predict_with_boost(st.session_state['model'], st.session_state['tfidf'], text, classes)
+                pred_label = best[0]
+                conf = best[1] if isinstance(best, tuple) else best[1]
+                # display only predicted category (clean professional card)
+                st.markdown(f'<div class="card"><h3 style="margin:0">Predicted Category</h3><div style="font-size:18px; font-weight:700;">{pred_label}</div></div>', unsafe_allow_html=True)
+
+# ---------------------------
+# Bulk categorize
+# ---------------------------
+with tab_bulk:
+    st.subheader("Bulk categorize (CSV)")
+    uploaded_csv = st.file_uploader("Upload CSV (subject,body)", type=["csv"], key="bulk")
+    if uploaded_csv is not None:
+        bdf = pd.read_csv(uploaded_csv)
+        if not {'subject','body'}.issubset(bdf.columns):
             st.error("CSV must contain 'subject' and 'body' columns.")
         else:
-            if "model" not in st.session_state:
-                st.error("Please retrain the model first.")
+            if 'model' not in st.session_state:
+                st.error("Model not trained.")
             else:
-                dfb["text"] = dfb["subject"].fillna("") + " " + dfb["body"].fillna("")
-
+                bdf['text'] = bdf['subject'].fillna("") + " " + bdf['body'].fillna("")
                 preds = []
-                classes = list(st.session_state["model"].classes_)
+                for t in bdf['text'].tolist():
+                    best, ranked = predict_with_boost(st.session_state['model'], st.session_state['tfidf'], t, list(st.session_state['model'].classes_))
+                    preds.append(best[0])
+                bdf['Predicted Category'] = preds
+                st.dataframe(bdf.head(50))
+                csv = bdf.to_csv(index=False).encode('utf-8')
+                st.download_button("Download results", csv, "categorized_bulk.csv", "text/csv")
 
-                for t in dfb["text"]:
-                    pred = predict_with_boost(
-                        st.session_state["model"],
-                        st.session_state["tfidf"],
-                        t,
-                        classes,
-                    )
-                    preds.append(pred[0])
+# ---------------------------
+# Inbox Simulator (UI-4)
+# ---------------------------
+with tab_sim:
+    st.subheader("Inbox Simulator — review & label (collect corrections)")
+    qlen = len(st.session_state['inbox_queue'])
+    st.info(f"Simulator queue: {qlen} items (use sidebar loader)")
 
-                dfb["Predicted Category"] = preds
+    if qlen == 0:
+        st.write("Load items from sidebar (Random / Generated / From dataset).")
+    else:
+        # show first item
+        item = st.session_state['inbox_queue'].popleft()
+        subj = item.get('subject','')
+        body = item.get('body','')
+        orig_cat = item.get('category','')
+        st.markdown(f"**Subject:** {subj}")
+        st.write(body)
+        # predicted (if model exists)
+        if 'model' in st.session_state:
+            best, ranked = predict_with_boost(st.session_state['model'], st.session_state['tfidf'], subj+" "+body, list(st.session_state['model'].classes_))
+            st.markdown(f"**Predicted:** {best[0]} — {best[1]:.1%}")
+        else:
+            st.markdown("**Predicted:** (model not trained)")
 
-                st.dataframe(dfb.head(50))
+        # accept / correct UI
+        cols = st.columns([1,1,1])
+        with cols[0]:
+            if st.button("✅ Accept classification"):
+                st.success("Marked accepted.")
+        with cols[1]:
+            # choose correct label
+            new_label = st.selectbox("Correct label", options=sorted(df['category'].unique().tolist()+["Payroll / Salary Issues"]))
+            if st.button("✍️ Save correction"):
+                st.session_state['corrections'].append({"subject":subj,"body":body,"correct_label":new_label})
+                st.success("Saved correction sample.")
+        with cols[2]:
+            if st.button("⏭ Skip"):
+                st.info("Skipped.")
 
-                st.download_button(
-                    "Download Results",
-                    dfb.to_csv(index=False).encode("utf-8"),
-                    "categorized.csv",
-                    "text/csv",
-                )
+    # export corrections
+    if st.session_state['corrections']:
+        if st.button("Export corrections CSV"):
+            cor = pd.DataFrame(st.session_state['corrections'])
+            st.download_button("Download corrections", cor.to_csv(index=False).encode('utf-8'), "corrections.csv", "text/csv")
+            st.success("Corrections ready for download.")
+
+# ---------------------------
+# Department Analytics (UI-5)
+# ---------------------------
+with tab_dept:
+    st.subheader("Department Analytics")
+    dept_sel = st.selectbox("Department", options=["All"]+departments)
+    filt = df if dept_sel=="All" else df[df['department']==dept_sel]
+    st.markdown(f"Showing {len(filt)} emails for: **{dept_sel}**")
+    # simple pivot
+    pivot = filt['category'].value_counts().reset_index().rename(columns={'index':'category','category':'count'})
+    fig, ax = plt.subplots(figsize=(8, max(3,0.25*len(pivot))))
+    sns.barplot(y=pivot['category'], x=pivot['count'], ax=ax, palette="Blues_d")
+    st.pyplot(fig)
+
+# ---------------------------
+# Admin tab (advanced)
+# ---------------------------
+with tab_admin:
+    st.subheader("Admin / Maintenance")
+    st.markdown("Advanced controls and reports.")
+    if 'model' in st.session_state:
+        st.write("Active model:", st.session_state['model_name'])
+        st.write("Metrics:", st.session_state.get('metrics',{}))
+        if st.button("Show classification report"):
+            st.text(st.session_state.get('report','(none)'))
+    st.markdown("You can retrain the model, export augmented dataset, or upload a saved model bundle (future).")
+    if st.button("Export augmented dataset (current)"):
+        if 'augmented_df' in st.session_state:
+            df_aug = st.session_state['augmented_df']
+            st.download_button("Download augmented dataset", df_aug.to_csv(index=False).encode('utf-8'), "augmented_dataset.csv", "text/csv")
+        else:
+            st.warning("No augmented dataset available (train first).")
+
+# ---------------------------
+# End
+# ---------------------------
+st.markdown("---")
+st.markdown("<div style='text-align:center; color:rgba(0,0,0,0.45)'>Pro-Max App — HR Email Classifier • Built for demo & production</div>", unsafe_allow_html=True)
