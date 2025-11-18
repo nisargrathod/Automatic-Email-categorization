@@ -1,5 +1,6 @@
 # ==========================================================
-# HR EMAIL CLASSIFIER — FINAL UI-REFINED VERSION
+# HR EMAIL CLASSIFIER — FINAL (HR KPIs + Guidance)
+# Single-file Streamlit app
 # ==========================================================
 
 import os
@@ -50,16 +51,21 @@ st.markdown(
     .main-header p {
         margin: 0;
         font-size: 15px;
-        opacity: 0.9;
+        opacity: 0.95;
     }
 
     .card {
         background: white;
         padding: 16px;
         border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         margin-bottom: 18px;
     }
+
+    .kpi-title { color: #6b7280; font-size:14px; margin:0; }
+    .kpi-value { color: #0b5ed7; font-size:22px; font-weight:700; margin:6px 0 0 0; }
+
+    .guide { background: #ffffff; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
     </style>
     """,
     unsafe_allow_html=True,
@@ -70,7 +76,7 @@ st.markdown(
     """
     <div class="main-header">
         <h2>HR Email Classification System</h2>
-        <p>Accurately categorize employee emails using Machine Learning</p>
+        <p>Accurately categorize employee emails using a lightweight ML engine</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -130,10 +136,10 @@ CATEGORY_TOPICS = {
     "Finance": ["reimbursement","invoice","expense","payment"],
     "IT Support": ["login","password","vpn","laptop","network"],
     "Security": ["access","security","unauthorized","breach"],
-    "Project Update": ["status","milestone","deadline","sprint","progress"],   # FIXED
+    "Project Update": ["status","milestone","deadline","sprint","progress"],
     "Payroll / Salary Issues": [
         "salary","salary delay","payslip","salary not received","bonus",
-        "arrears","tax deduction","overtime payment","payroll correction"
+        "arrears","tax deduction","overtime payment","payroll correction","payroll"
     ],
 }
 
@@ -230,7 +236,7 @@ def augment_and_train(df_base):
 
     synth_rows = []
 
-    # Payroll boost — 400 samples
+    # Payroll boost — SYNTH_PAYROLL_COUNT samples
     subs, bods = generate_samples("Payroll / Salary Issues", SYNTH_PAYROLL_COUNT)
     for s, b in zip(subs, bods):
         synth_rows.append({
@@ -333,41 +339,119 @@ tabs = st.tabs(["📊 Dashboard", "📮 Classify Email", "📁 Bulk Categorizati
 dashboard_tab, classify_tab, bulk_tab = tabs
 
 # -----------------------------------------------------
-# Dashboard
+# Dashboard (HR KPIs)
 # -----------------------------------------------------
 with dashboard_tab:
-    st.header("📊 Dashboard Overview")
+    st.header("📊 HR Dashboard")
 
-    counts = df["category"].value_counts()
+    # Prepare simple KPI metrics useful for HR
+    df_dash = df.copy()
 
+    # Payroll Issues count (rule-based detection)
+    payroll_keywords = [
+        "salary", "not credited", "payslip", "bonus", "arrears",
+        "payment delay", "payroll", "salary missing", "salary not received"
+    ]
+    def has_payroll_issue(text):
+        t = str(text).lower()
+        return any(kw in t for kw in payroll_keywords)
+    df_dash["is_payroll"] = df_dash["text"].apply(has_payroll_issue)
+    payroll_count = int(df_dash["is_payroll"].sum())
+
+    # Most frequent category
+    if len(df_dash) > 0:
+        most_freq_category = df_dash["category"].value_counts().idxmax()
+    else:
+        most_freq_category = "—"
+
+    # Sentiment overview (simple rule-based)
+    positive_words = ["thank", "thanks", "appreciate", "resolved", "good", "happy"]
+    negative_words = ["issue", "problem", "delay", "complaint", "not working", "error", "frustrat"]
+    def sentiment_score(text):
+        t = str(text).lower()
+        score = 0
+        for w in positive_words:
+            if w in t: score += 1
+        for w in negative_words:
+            if w in t: score -= 1
+        return score
+    df_dash["sentiment_score"] = df_dash["text"].apply(sentiment_score)
+    avg_sent = df_dash["sentiment_score"].mean()
+    if avg_sent > 0.5:
+        sentiment_label = "Positive"
+    elif avg_sent < -0.5:
+        sentiment_label = "Negative"
+    else:
+        sentiment_label = "Neutral"
+
+    # Urgency score (0-100) — rule-based
+    urgent_keywords = ["urgent", "immediate", "asap", "escalate", "important", "not credited"]
+    def urgency_hits(text):
+        t = str(text).lower()
+        return sum(1 for kw in urgent_keywords if kw in t)
+    df_dash["urgency_hits"] = df_dash["text"].apply(urgency_hits)
+    # scale to 0-100 (assume ~3 hits = high urgency)
+    avg_urg = df_dash["urgency_hits"].mean() if len(df_dash) > 0 else 0.0
+    urgency_score = min(100, int((avg_urg / 3.0) * 100))
+
+    # Layout: 4 KPI cards in a row
+    k1, k2, k3, k4 = st.columns(4)
+
+    with k1:
+        st.markdown(
+            f'<div class="card"><div class="kpi-title">Payroll Issues</div><div class="kpi-value">{payroll_count}</div></div>',
+            unsafe_allow_html=True
+        )
+
+    with k2:
+        st.markdown(
+            f'<div class="card"><div class="kpi-title">Most Frequent Category</div><div class="kpi-value">{most_freq_category}</div></div>',
+            unsafe_allow_html=True
+        )
+
+    with k3:
+        st.markdown(
+            f'<div class="card"><div class="kpi-title">Sentiment Overview</div><div class="kpi-value">{sentiment_label}</div></div>',
+            unsafe_allow_html=True
+        )
+
+    with k4:
+        st.markdown(
+            f'<div class="card"><div class="kpi-title">Urgency Score</div><div class="kpi-value">{urgency_score} / 100</div></div>',
+            unsafe_allow_html=True
+        )
+
+    st.write("")  # small gap
+
+    # Category distribution chart (kept, useful)
     st.subheader("Category Distribution")
-    fig, ax = plt.subplots(figsize=(9, 4 + len(counts)*0.25))
-    sns.barplot(x=counts.values, y=counts.index, palette="Blues_d", ax=ax)
+    counts = df_dash["category"].value_counts()
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.25*len(counts))))
+    sns.barplot(y=counts.index, x=counts.values, palette="Blues_d", ax=ax)
+    ax.set_xlabel("Count"); ax.set_ylabel("")
     st.pyplot(fig)
 
-    st.subheader("Word Cloud")
+    # Word cloud (optional)
+    st.subheader("Common Words")
     try:
-        wc = WordCloud(width=1000, height=300, background_color="white").generate(
-            " ".join(df["cleaned_text"])
-        )
-        fig_wc, ax_wc = plt.subplots(figsize=(10, 3))
-        ax_wc.imshow(wc, interpolation="bilinear")
-        ax_wc.axis("off")
-        st.pyplot(fig_wc)
-    except:
-        st.info("Not enough text to generate word cloud.")
+        corpus = " ".join(df_dash["cleaned_text"].tolist())
+        if corpus.strip():
+            wc = WordCloud(width=900, height=300, background_color="white", max_words=150).generate(corpus)
+            fig2, ax2 = plt.subplots(figsize=(9,3))
+            ax2.imshow(wc, interpolation="bilinear"); ax2.axis("off"); st.pyplot(fig2)
+        else:
+            st.info("Not enough text for word cloud.")
+    except Exception:
+        st.info("Word cloud unavailable.")
 
+    # Confusion matrix (if available)
     if "model" in st.session_state and "confusion" in st.session_state:
-        st.subheader("Confusion Matrix")
+        st.subheader("Confusion Matrix (last training)")
         y_test, preds = st.session_state["confusion"]
         labels = sorted(list(set(y_test)))
         cm = confusion_matrix(y_test, preds, labels=labels)
-
         fig_cm, ax_cm = plt.subplots(figsize=(10, 6))
-        sns.heatmap(
-            cm, annot=True, fmt="d", cmap="Blues",
-            xticklabels=labels, yticklabels=labels, ax=ax_cm
-        )
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels, ax=ax_cm)
         st.pyplot(fig_cm)
 
 # -----------------------------------------------------
@@ -443,3 +527,35 @@ with bulk_tab:
                     "categorized.csv",
                     "text/csv",
                 )
+
+# -----------------------------------------------------
+# HR Guidance — "How to use" and "What is this for"
+# -----------------------------------------------------
+st.markdown("---")
+st.markdown('<div class="card"><h3 style="margin-top:0">How HR should use this tool</h3>', unsafe_allow_html=True)
+st.markdown("""
+1. **Retrain Model (when needed):**  
+   - Click **🔄 Retrain Model** on the left after uploading new emails (JSON). This refreshes the classifier with latest data and synthetic augmentation for balanced categories.
+
+2. **Use Single Email Classification for Triage:**  
+   - Paste subject + body and click **Classify Email** to get an immediate category (e.g., Payroll / Salary Issues). Use this to quickly route incoming emails to the right team.
+
+3. **Use Bulk Categorization for large batches:**  
+   - Upload a CSV with `subject` and `body` columns to categorize hundreds of emails at once. Download the results for integration into your ticketing or HRMS.
+
+4. **Interpret the Dashboard KPIs:**  
+   - **Payroll Issues:** shows how many emails in the dataset mention payroll-related keywords — helps prioritize payroll triage.  
+   - **Most Frequent Category:** shows which HR request type is most common.  
+   - **Sentiment Overview:** gives a quick read on overall employee tone in recent emails.  
+   - **Urgency Score:** indicates how many requests include urgent language and deserve immediate attention.
+
+5. **Take Action:**  
+   - Use the dashboard to identify spikes (e.g., payroll issues) and take immediate steps — open a triage queue, notify payroll team, or schedule a townhall.
+
+6. **Keep improving the model:**  
+   - If you see misclassified emails (e.g., Payroll classified as Project Update), collect a small set of correctly labeled emails and add to the JSON dataset, then click Retrain Model.
+
+**Important:** This tool is ML-first with gentle keyword guidance. It helps triage and organize HR workload — decisions and final routing should still be reviewed by HR personnel.
+""")
+
+st.markdown("</div>", unsafe_allow_html=True)
