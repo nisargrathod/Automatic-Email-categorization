@@ -1,5 +1,5 @@
 # ==========================================================
-# HR EMAIL CLASSIFIER — FINAL (HR KPIs + Guidance)
+# HR EMAIL CLASSIFIER — FINAL (SVM Optimized + HR KPIs + Guidance)
 # Single-file Streamlit app
 # ==========================================================
 
@@ -14,74 +14,57 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    classification_report,
-    confusion_matrix,
-)
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import LinearSVC, SVC
 
 # -----------------------------------------------------
 # Page UI Style — CLEAN CORPORATE THEME
 # -----------------------------------------------------
 st.set_page_config(page_title="HR Email Classifier", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    .stApp { background: #f5f6f8; color:#0f172a; }
+st.markdown("""
+<style>
+.stApp { background: #f5f6f8; color:#0f172a; }
 
-    .main-header {
-        background: #0b5ed7;
-        padding: 22px;
-        border-radius: 8px;
-        color: white;
-        text-align: left;
-    }
+.main-header {
+    background: #0b5ed7;
+    padding: 22px;
+    border-radius: 8px;
+    color: white;
+    text-align: left;
+}
 
-    .main-header h2 {
-        margin: 0;
-        font-weight: 600;
-    }
+.main-header h2 {
+    margin: 0;
+    font-weight: 600;
+}
 
-    .main-header p {
-        margin: 0;
-        font-size: 15px;
-        opacity: 0.95;
-    }
+.main-header p {
+    margin: 0;
+    font-size: 15px;
+    opacity: 0.95;
+}
 
-    .card {
-        background: white;
-        padding: 16px;
-        border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        margin-bottom: 18px;
-    }
+.card {
+    background: white;
+    padding: 16px;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin-bottom: 18px;
+}
 
-    .kpi-title { color: #6b7280; font-size:14px; margin:0; }
-    .kpi-value { color: #0b5ed7; font-size:22px; font-weight:700; margin:6px 0 0 0; }
+.kpi-title { color: #6b7280; font-size:14px; margin:0; }
+.kpi-value { color: #0b5ed7; font-size:22px; font-weight:700; margin:6px 0 0 0; }
+</style>
+""", unsafe_allow_html=True)
 
-    .guide { background: #ffffff; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Cleaner professional header
-st.markdown(
-    """
-    <div class="main-header">
-        <h2>HR Email Classification System</h2>
-        <p>Accurately categorize employee emails using a lightweight ML engine</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-st.write("")
+st.markdown("""
+<div class="main-header">
+    <h2>HR Email Classification System</h2>
+    <p>Accurately categorize employee emails using an optimized SVM ML engine</p>
+</div>
+""", unsafe_allow_html=True)
 
 # -----------------------------------------------------
 # Constants
@@ -138,8 +121,9 @@ CATEGORY_TOPICS = {
     "Security": ["access","security","unauthorized","breach"],
     "Project Update": ["status","milestone","deadline","sprint","progress"],
     "Payroll / Salary Issues": [
-        "salary","salary delay","payslip","salary not received","bonus",
-        "arrears","tax deduction","overtime payment","payroll correction","payroll"
+        "salary","salary delay","payslip","salary not received",
+        "bonus","arrears","tax deduction","overtime payment",
+        "payroll correction","payroll"
     ],
 }
 
@@ -154,7 +138,6 @@ GENERIC_TOPICS = ["general", "policy clarification", "update"]
 TEMPLATES = [
     "Hello Team,\n\nWe have a session on {topic}. Please join.\n\nThanks,\n{sender}",
     "Hi All,\n\nInvitation: {topic}. Kindly register.\n\nRegards,\n{sender}",
-    "Greetings,\n\nUpcoming workshop: {topic}.\n\nBest,\n{sender}",
 ]
 SENDERS = ["Ankit", "Priya", "Rahul", "Neha", "Karan"]
 
@@ -182,7 +165,8 @@ def predict_with_boost(model, tfidf, raw_text, classes):
     else:
         try:
             df = model.decision_function(X)
-            if df.ndim == 1: df = np.vstack([-df, df]).T
+            if df.ndim == 1:
+                df = np.vstack([-df, df]).T
             base = softmax(df[0])
         except:
             base = np.ones(len(classes)) / len(classes)
@@ -202,10 +186,8 @@ def predict_with_boost(model, tfidf, raw_text, classes):
     final = base + BOOST_WEIGHT * kw_scores
     final /= final.sum()
 
-    order = np.argsort(final)[::-1]
-    best = (classes[order[0]], float(final[order[0]]))
-
-    return best
+    best = classes[np.argmax(final)]
+    return best, float(max(final))
 
 # -----------------------------------------------------
 # Load Dataset
@@ -218,7 +200,8 @@ if uploaded:
     st.sidebar.success("Dataset uploaded.")
 else:
     df = safe_read_json(DATA_FILE)
-    if df is None: st.stop()
+    if df is None:
+        st.stop()
 
 df["subject"] = df["subject"].fillna("")
 df["body"] = df["body"].fillna("")
@@ -226,82 +209,76 @@ df["text"] = df["subject"] + " " + df["body"]
 df["cleaned_text"] = df["text"].apply(clean_text)
 
 # -----------------------------------------------------
-# Training Engine
+# TRAINING ENGINE — UPDATED (SVM ONLY)
 # -----------------------------------------------------
 def augment_and_train(df_base):
 
     dfw = df_base.copy()
     counts = dfw["category"].value_counts()
     minority = counts[counts < MINORITY_THRESHOLD_DEFAULT].index.tolist()
-
     synth_rows = []
 
-    # Payroll boost — SYNTH_PAYROLL_COUNT samples
+    # Payroll Boost
     subs, bods = generate_samples("Payroll / Salary Issues", SYNTH_PAYROLL_COUNT)
     for s, b in zip(subs, bods):
-        synth_rows.append({
-            "subject": s, "body": b, "text": s+" "+b,
-            "category": "Payroll / Salary Issues",
-            "cleaned_text": clean_text(s+" "+b)
-        })
+        synth_rows.append({"subject": s, "body": b,
+                           "text": s+" "+b, "category": "Payroll / Salary Issues",
+                           "cleaned_text": clean_text(s+" "+b)})
 
-    # TE for two classes
+    # TE Boost
     for cat in ["Training & Development", "Event Coordination"]:
         subs, bods = generate_samples(cat, SYNTH_TE_COUNT)
         for s, b in zip(subs, bods):
-            synth_rows.append({
-                "subject": s, "body": b, "text": s+" "+b,
-                "category": cat,
-                "cleaned_text": clean_text(s+" "+b)
-            })
+            synth_rows.append({"subject": s, "body": b,
+                               "text": s+" "+b, "category": cat,
+                               "cleaned_text": clean_text(s+" "+b)})
 
-    # S3 for minority
+    # S3 Boost
     for cat in minority:
         if cat in ["Payroll / Salary Issues", "Training & Development", "Event Coordination"]:
             continue
         subs, bods = generate_samples(cat, SYNTH_PER_OTHER_CLASS)
         for s, b in zip(subs, bods):
-            synth_rows.append({
-                "subject": s, "body": b, "text": s+" "+b,
-                "category": cat,
-                "cleaned_text": clean_text(s+" "+b)
-            })
+            synth_rows.append({"subject": s, "body": b,
+                               "text": s+" "+b, "category": cat,
+                               "cleaned_text": clean_text(s+" "+b)})
 
-    df_aug = dfw.copy()
-    if synth_rows:
-        df_synth = pd.DataFrame(synth_rows)
-        df_aug = pd.concat([df_aug, df_synth]).sample(frac=1, random_state=RANDOM_SEED)
+    df_aug = pd.concat([dfw, pd.DataFrame(synth_rows)], ignore_index=True)
+    df_aug = df_aug.sample(frac=1, random_state=RANDOM_SEED).reset_index(drop=True)
 
+    # TF-IDF
     tfidf = TfidfVectorizer(
         max_df=0.9, min_df=1,
-        ngram_range=(1,2),
+        ngram_range=(1, 2),
         sublinear_tf=True,
-        max_features=40000
+        max_features=45000
     )
     X = tfidf.fit_transform(df_aug["cleaned_text"])
     y = df_aug["category"]
 
+    # Split
     if (y.value_counts() >= 2).all():
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.18, random_state=RANDOM_SEED, stratify=y
-        )
+            X, y, test_size=0.18, random_state=RANDOM_SEED, stratify=y)
     else:
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.18, random_state=RANDOM_SEED
-        )
+            X, y, test_size=0.18, random_state=RANDOM_SEED)
 
+    # --------------------------
+    # MODEL LIST — SVM ONLY
+    # --------------------------
     models = {
-        "LogisticRegression": LogisticRegression(max_iter=2000, solver="liblinear", class_weight="balanced"),
-        "LinearSVC": LinearSVC(max_iter=5000),
-        "RandomForest": RandomForestClassifier(n_estimators=200, random_state=RANDOM_SEED)
+        "LinearSVC": LinearSVC(C=1.5, max_iter=7000),
+        "SVM_RBF": SVC(C=2.0, kernel="rbf",
+                       probability=True, gamma="scale")
     }
 
     scores = {}
-    for name, model in models.items():
+    for name, mdl in models.items():
         try:
-            f1 = np.mean(
-                cross_val_score(model, X_train, y_train, scoring="f1_weighted", cv=3)
-            )
+            f1 = np.mean(cross_val_score(
+                mdl, X_train, y_train,
+                scoring="f1_weighted", cv=3))
         except:
             f1 = 0
         scores[name] = f1
@@ -320,14 +297,14 @@ def augment_and_train(df_base):
             "accuracy": accuracy_score(y_test, preds),
             "f1_weighted": f1_score(y_test, preds, average="weighted")
         },
-        "confusion": (y_test, preds),
+        "confusion": (y_test, preds)
     }
 
 # -----------------------------------------------------
-# Sidebar — Update Model Button
+# Sidebar — Retrain Button
 # -----------------------------------------------------
 if st.sidebar.button("🔄 Retrain Model"):
-    with st.spinner("Training model..."):
+    with st.spinner("Training model (SVM)..."):
         result = augment_and_train(df)
         st.session_state.update(result)
         st.sidebar.success("Model updated successfully!")
@@ -339,44 +316,38 @@ tabs = st.tabs(["📊 Dashboard", "📮 Classify Email", "📁 Bulk Categorizati
 dashboard_tab, classify_tab, bulk_tab = tabs
 
 # -----------------------------------------------------
-# Dashboard (HR KPIs)
+# Dashboard (KPIs)
 # -----------------------------------------------------
 with dashboard_tab:
     st.header("📊 HR Dashboard")
 
-    # Prepare simple KPI metrics useful for HR
     df_dash = df.copy()
 
-    # Payroll Issues count (rule-based detection)
-    payroll_keywords = [
-        "salary", "not credited", "payslip", "bonus", "arrears",
-        "payment delay", "payroll", "salary missing", "salary not received"
-    ]
-    def has_payroll_issue(text):
-        t = str(text).lower()
-        return any(kw in t for kw in payroll_keywords)
-    df_dash["is_payroll"] = df_dash["text"].apply(has_payroll_issue)
-    payroll_count = int(df_dash["is_payroll"].sum())
+    payroll_keywords = ["salary", "not credited", "payslip", "bonus",
+                        "arrears", "payment delay", "payroll", "salary missing",
+                        "salary not received"]
+    df_dash["is_payroll"] = df_dash["text"].apply(
+        lambda x: any(kw in str(x).lower()
+                      for kw in payroll_keywords))
+    payroll_count = df_dash["is_payroll"].sum()
 
-    # Most frequent category
-    if len(df_dash) > 0:
-        most_freq_category = df_dash["category"].value_counts().idxmax()
-    else:
-        most_freq_category = "—"
+    most_freq_category = df_dash["category"].value_counts().idxmax()
 
-    # Sentiment overview (simple rule-based)
-    positive_words = ["thank", "thanks", "appreciate", "resolved", "good", "happy"]
-    negative_words = ["issue", "problem", "delay", "complaint", "not working", "error", "frustrat"]
+    pos_words = ["thank", "thanks", "appreciate", "resolved",
+                 "good", "happy"]
+    neg_words = ["issue", "problem", "delay",
+                 "complaint", "not working", "error"]
+
     def sentiment_score(text):
         t = str(text).lower()
-        score = 0
-        for w in positive_words:
-            if w in t: score += 1
-        for w in negative_words:
-            if w in t: score -= 1
+        score = sum(w in t for w in pos_words) - \
+            sum(w in t for w in neg_words)
         return score
-    df_dash["sentiment_score"] = df_dash["text"].apply(sentiment_score)
+
+    df_dash["sentiment_score"] = df_dash["text"].apply(
+        sentiment_score)
     avg_sent = df_dash["sentiment_score"].mean()
+
     if avg_sent > 0.5:
         sentiment_label = "Positive"
     elif avg_sent < -0.5:
@@ -384,75 +355,40 @@ with dashboard_tab:
     else:
         sentiment_label = "Neutral"
 
-    # Urgency score (0-100) — rule-based
-    urgent_keywords = ["urgent", "immediate", "asap", "escalate", "important", "not credited"]
-    def urgency_hits(text):
-        t = str(text).lower()
-        return sum(1 for kw in urgent_keywords if kw in t)
-    df_dash["urgency_hits"] = df_dash["text"].apply(urgency_hits)
-    # scale to 0-100 (assume ~3 hits = high urgency)
-    avg_urg = df_dash["urgency_hits"].mean() if len(df_dash) > 0 else 0.0
-    urgency_score = min(100, int((avg_urg / 3.0) * 100))
+    urgent_kw = ["urgent", "immediate", "asap", "escalate", "important"]
+    df_dash["urgency_hits"] = df_dash["text"].apply(
+        lambda t: sum(kw in str(t).lower() for kw in urgent_kw))
+    avg_urg = df_dash["urgency_hits"].mean()
+    urgency_score = min(100, int((avg_urg / 3) * 100))
 
-    # Layout: 4 KPI cards in a row
     k1, k2, k3, k4 = st.columns(4)
 
-    with k1:
-        st.markdown(
-            f'<div class="card"><div class="kpi-title">Payroll Issues</div><div class="kpi-value">{payroll_count}</div></div>',
-            unsafe_allow_html=True
-        )
+    k1.markdown(
+        f'<div class="card"><div class="kpi-title">Payroll Issues</div><div class="kpi-value">{payroll_count}</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    with k2:
-        st.markdown(
-            f'<div class="card"><div class="kpi-title">Most Frequent Category</div><div class="kpi-value">{most_freq_category}</div></div>',
-            unsafe_allow_html=True
-        )
+    k2.markdown(
+        f'<div class="card"><div class="kpi-title">Most Frequent Category</div><div class="kpi-value">{most_freq_category}</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    with k3:
-        st.markdown(
-            f'<div class="card"><div class="kpi-title">Sentiment Overview</div><div class="kpi-value">{sentiment_label}</div></div>',
-            unsafe_allow_html=True
-        )
+    k3.markdown(
+        f'<div class="card"><div class="kpi-title">Sentiment Overview</div><div class="kpi-value">{sentiment_label}</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    with k4:
-        st.markdown(
-            f'<div class="card"><div class="kpi-title">Urgency Score</div><div class="kpi-value">{urgency_score} / 100</div></div>',
-            unsafe_allow_html=True
-        )
+    k4.markdown(
+        f'<div class="card"><div class="kpi-title">Urgency Score</div><div class="kpi-value">{urgency_score} / 100</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    st.write("")  # small gap
-
-    # Category distribution chart (kept, useful)
     st.subheader("Category Distribution")
-    counts = df_dash["category"].value_counts()
-    fig, ax = plt.subplots(figsize=(9, max(3, 0.25*len(counts))))
-    sns.barplot(y=counts.index, x=counts.values, palette="Blues_d", ax=ax)
-    ax.set_xlabel("Count"); ax.set_ylabel("")
+    fig, ax = plt.subplots(figsize=(9, 4))
+    sns.barplot(x=df_dash["category"].value_counts().values,
+                y=df_dash["category"].value_counts().index,
+                palette="Blues_d", ax=ax)
     st.pyplot(fig)
-
-    # Word cloud (optional)
-    st.subheader("Common Words")
-    try:
-        corpus = " ".join(df_dash["cleaned_text"].tolist())
-        if corpus.strip():
-            wc = WordCloud(width=900, height=300, background_color="white", max_words=150).generate(corpus)
-            fig2, ax2 = plt.subplots(figsize=(9,3))
-            ax2.imshow(wc, interpolation="bilinear"); ax2.axis("off"); st.pyplot(fig2)
-        else:
-            st.info("Not enough text for word cloud.")
-    except Exception:
-        st.info("Word cloud unavailable.")
-
-    # Confusion matrix (if available)
-    if "model" in st.session_state and "confusion" in st.session_state:
-        st.subheader("Confusion Matrix (last training)")
-        y_test, preds = st.session_state["confusion"]
-        labels = sorted(list(set(y_test)))
-        cm = confusion_matrix(y_test, preds, labels=labels)
-        fig_cm, ax_cm = plt.subplots(figsize=(10, 6))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels, ax=ax_cm)
-        st.pyplot(fig_cm)
 
 # -----------------------------------------------------
 # Single Email Classification
@@ -469,7 +405,8 @@ with classify_tab:
         else:
             raw = (subj + " " + body).strip()
             classes = list(st.session_state["model"].classes_)
-            pred = predict_with_boost(
+
+            pred, _ = predict_with_boost(
                 st.session_state["model"],
                 st.session_state["tfidf"],
                 raw,
@@ -480,7 +417,7 @@ with classify_tab:
                 f"""
                 <div class="card">
                     <h3>Predicted Category</h3>
-                    <p style="font-size:20px; font-weight:600;">{pred[0]}</p>
+                    <p style="font-size:20px; font-weight:600;">{pred}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -497,27 +434,22 @@ with bulk_tab:
     if file:
         dfb = pd.read_csv(file)
 
-        if not {"subject","body"}.issubset(dfb.columns):
+        if not {"subject", "body"}.issubset(dfb.columns):
             st.error("CSV must contain 'subject' and 'body' columns.")
         else:
             if "model" not in st.session_state:
                 st.error("Please retrain the model first.")
             else:
-                dfb["text"] = dfb["subject"].fillna("") + " " + dfb["body"].fillna("")
+                dfb["text"] = dfb["subject"].fillna(
+                    "") + " " + dfb["body"].fillna("")
 
-                preds = []
                 classes = list(st.session_state["model"].classes_)
-
-                for t in dfb["text"]:
-                    pred = predict_with_boost(
-                        st.session_state["model"],
-                        st.session_state["tfidf"],
-                        t,
-                        classes,
-                    )
-                    preds.append(pred[0])
-
-                dfb["Predicted Category"] = preds
+                dfb["Predicted Category"] = [
+                    predict_with_boost(st.session_state["model"],
+                                       st.session_state["tfidf"],
+                                       t, classes)[0]
+                    for t in dfb["text"]
+                ]
 
                 st.dataframe(dfb.head(50))
 
@@ -529,33 +461,17 @@ with bulk_tab:
                 )
 
 # -----------------------------------------------------
-# HR Guidance — "How to use" and "What is this for"
+# HR Guidance
 # -----------------------------------------------------
 st.markdown("---")
-st.markdown('<div class="card"><h3 style="margin-top:0">How HR should use this tool</h3>', unsafe_allow_html=True)
 st.markdown("""
-1. **Retrain Model (when needed):**  
-   - Click **🔄 Retrain Model** on the left after uploading new emails (JSON). This refreshes the classifier with latest data and synthetic augmentation for balanced categories.
+<div class="card">
+<h3 style="margin-top:0">How HR Should Use This Tool</h3>
 
-2. **Use Single Email Classification for Triage:**  
-   - Paste subject + body and click **Classify Email** to get an immediate category (e.g., Payroll / Salary Issues). Use this to quickly route incoming emails to the right team.
-
-3. **Use Bulk Categorization for large batches:**  
-   - Upload a CSV with `subject` and `body` columns to categorize hundreds of emails at once. Download the results for integration into your ticketing or HRMS.
-
-4. **Interpret the Dashboard KPIs:**  
-   - **Payroll Issues:** shows how many emails in the dataset mention payroll-related keywords — helps prioritize payroll triage.  
-   - **Most Frequent Category:** shows which HR request type is most common.  
-   - **Sentiment Overview:** gives a quick read on overall employee tone in recent emails.  
-   - **Urgency Score:** indicates how many requests include urgent language and deserve immediate attention.
-
-5. **Take Action:**  
-   - Use the dashboard to identify spikes (e.g., payroll issues) and take immediate steps — open a triage queue, notify payroll team, or schedule a townhall.
-
-6. **Keep improving the model:**  
-   - If you see misclassified emails (e.g., Payroll classified as Project Update), collect a small set of correctly labeled emails and add to the JSON dataset, then click Retrain Model.
-
-**Important:** This tool is ML-first with gentle keyword guidance. It helps triage and organize HR workload — decisions and final routing should still be reviewed by HR personnel.
-""")
-
-st.markdown("</div>", unsafe_allow_html=True)
+1. **Retrain Model** using the sidebar when new labeled data is added.  
+2. **Single Email Classification** gives instant category prediction.  
+3. **Bulk Categorization** allows classifying hundreds of emails at once.  
+4. **Dashboard KPIs** help HR quickly identify workload patterns such as Payroll spikes, sentiment issues, or urgent messages.  
+5. Continue improving accuracy by adding more real labeled emails and retraining.
+</div>
+""", unsafe_allow_html=True)
