@@ -62,7 +62,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h2>HR Email Classification System</h2>
-    <p>Accurately categorize employee emails using an optimized SVM ML engine</p>
+    <p>Accurately categorize employee emails using an optimized ML engine</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -468,10 +468,10 @@ st.markdown("""
 <div class="card">
 <h3 style="margin-top:0">How HR Should Use This Tool</h3>
 
-1. **Retrain Model** using the sidebar when new labeled data is added.  
-2. **Single Email Classification** gives instant category prediction.  
-3. **Bulk Categorization** allows classifying hundreds of emails at once.  
-4. **Dashboard KPIs** help HR quickly identify workload patterns such as Payroll spikes, sentiment issues, or urgent messages.  
+1. Retrain Model using the sidebar when new labeled data is added.  
+2. Single Email Classification gives instant category prediction.  
+3. Bulk Categorization allows classifying hundreds of emails at once.  
+4. Dashboard KPIs help HR quickly identify workload patterns such as Payroll spikes, sentiment issues, or urgent messages.  
 5. Continue improving accuracy by adding more real labeled emails and retraining.
 </div>
 """, unsafe_allow_html=True)
